@@ -1,7 +1,6 @@
 # CD-master
 A class for processing CD data of various formats
 
-
 Dependenices:
 - numpy
 - matplotlib
@@ -15,7 +14,7 @@ Windows 10 64bit
 
 # How to use
 
-Input data
+## Input data
 
 Your input files have to be named correctly in order to be processed with the class.
 The naming rules are:
@@ -35,7 +34,6 @@ Depending on the experiment type, the required parameters are different.
 - For multiple spectra recorded at different temepratures as a part of a variable temperature experiment: date, name, concentration, pathlength, pH, temperature  range
 - For multiple spectra recorded over time (kinetics) at a fixed temperature: date, name, concentration, pathlength, pH, temperature, time range
 
-
 You need to provide the input data as a list and specify which type of the experiment you are processing by passing an argument mode like this:
 exp.process_experiment(files=files, mode='single_scans')
 The modes availbale are:
@@ -45,23 +43,21 @@ The modes availbale are:
 - 'kinet_scans' for multiple spectra recorded over time
 In the examples, you may find the module datafiles_opener that is used to find the text files in the specified directory, therefore, you need to make sure you create a separate directory only for the files that will be processed. Also, the class takes only the datasets in a simple txt format, so the data needs to be exported into txt files using the instrument software.
 
-
-Extracted data
+## Extracted data
 
 All the data extracted from a single or multiple files will be stored as a dictionary that you can access by calling
 exp.get_samples())  # where exp is an example of the class that you've created
 or print off by doing:
 exp.print_off_dict(exp.get_samples())  # where exp is an example of the class that you've created
 
-Plotting
+## Plotting
 
 You can plot the data either manually or using one of the methods that already present in the class.
 exp.spec_plotter()  # is made for plotting a single or multiple spectra
 You can pass it parameters that you would normally set up for matplotlib or/and seaborn
-
 exp.t_plotter()  # is made for plotting for thermal denaturation datasets
 
-Labels
+## Labels
 
 By setting up labels for your datasets, you can control how they will be shown in the legend.
 For example, for concentration dependencies you may find it convenient to use concentrations in the legend:
