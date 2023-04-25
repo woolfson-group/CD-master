@@ -8,6 +8,8 @@
 # Copyright:   (c) Andrey Romanyuk 2021
 # Licence:     <your licence>
 #-------------------------------------------------------------------------------
+import math
+
 import numpy as np
 import re
 import matplotlib.pyplot as plt
@@ -20,12 +22,12 @@ class cdExp(object):
     """
 
     """
-
     def __init__(self):
         # self.mode =
         self.samples = {}  # let's store all the data for the samples of interest as a dict
         self.blanks = {}  # let's store blanks separately
         self.plot_order = []
+        self.blanks_order = []
         self.title = ''
         self.mode = 'single_scans'
 
@@ -117,7 +119,19 @@ class cdExp(object):
             else:
                 print(f'{k}\t{v}')
 
-    def input_datasets(self, files, bl_cor=1):
+    def set_blanks_order(self, blanks):
+        if len(self.get_blanks()) == 1:
+            self.blanks_order = [1] * len(self.get_samples())
+        elif blanks:
+            self.blanks_order = blanks
+        else:
+            blanks_order = [int(i) for i in input(
+                'Please, list the numbers of blanks in the order corresponding to the samples they should be used with:\t').split(
+                ',')]
+    def get_blanks_order(self):
+        return self.blanks_order
+
+    def input_datasets(self, files, blanks, bl_cor=1):
         count_blanks = 1
         count_samples = 1
         for f in files:
@@ -136,13 +150,15 @@ class cdExp(object):
             print('\nBlanks:\n')
             for k, v in self.get_blanks().items():
                 print(k, v['Name'])
-            if len(self.get_blanks()) == 1:
-                blanks_order = [1] * len(self.get_samples())
-            else:
-                blanks_order = [int(i) for i in input(
-                    'Please, list the numbers of blanks in the order corresponding to the samples they should be used with:\t').split(',')]
+            self.set_blanks_order(blanks)
+            # if len(self.get_blanks()) == 1:
+            #     blanks_order = [1] * len(self.get_samples())
+            # else:
+            #
+            #     blanks_order = [int(i) for i in input(
+            #         'Please, list the numbers of blanks in the order corresponding to the samples they should be used with:\t').split(',')]
 
-            for v, b in zip(self.get_samples().values(), blanks_order):
+            for v, b in zip(self.get_samples().values(), self.get_blanks_order()):
                 v['Blank'] = b
 
     def process_filenames(self, mode='single_scans'):
@@ -177,6 +193,11 @@ class cdExp(object):
                         params['Temp_C'] = temp_C[0]
                     elif self.get_mode() == 'var_temp' or self.get_mode() == 'var_temp_scans':
                         params['Temp_C_range'] = temp_C
+                        if temp_C[-1] > temp_C[0]:
+                            params['melt'] = 'melt'
+                        else:
+                            params['melt'] = 'cool'
+
                 elif el.endswith('nm') and (self.get_mode() == 'var_temp' or  self.get_mode() == 'var_temp_scans') :
                     params['WL'] = float(el[:-2])
                 elif (el.endswith('min') or el.endswith('s') or el.endswith('h') ) and\
@@ -193,6 +214,7 @@ class cdExp(object):
                     if pH > 14:
                         pH /= 10
                     params['pH'] = pH
+
                 else:
                     params['Info'].append(el)
 
@@ -321,10 +343,26 @@ class cdExp(object):
             Divide_by = val['Pathlength_mm'] * val['Conc_uM'] * val['Pep_bonds'] * 10 ** -6
             if self.get_mode() == 'single_scans' or self.get_mode() == 'var_temp_scans' or self.get_mode() == 'kinet_scans':
                 # subtract blank array from data array
-                scan_blanked = np.subtract(val["mdeg"], self.get_blanks()[val['Blank']]["mdeg"])
+                blank = self.get_blanks()[val['Blank']]
+                if len(val["mdeg"]) == len(blank["mdeg"]):
+                    scan_blanked = np.subtract(val["mdeg"], blank["mdeg"])
+                else:
+                    # print(val['Conc_uM'])
+                    blank_mdeg_sele = []
+                    for wl in blank['WL']:
+                        if wl in val['WL']:
+                            # print(np.where(blank['WL'] == wl)[0])
+                            blank_mdeg_sele.append(blank['mdeg'][np.where(blank['WL'] == wl)[0]])
+                    # print(blank_mdeg_sele)
+                    scan_blanked = np.subtract(val["mdeg"], np.array(blank_mdeg_sele).flatten())
+
+
+
                 # convert mdeg to MRE
                 MRE = scan_blanked[:] / Divide_by
                 val['MRE'] = MRE
+
+                # print(len(MRE))
 
             if self.get_mode() == 'var_temp':
                 condition = self.get_blanks()[val['Blank']]["WL"] == val['WL']
@@ -333,20 +371,88 @@ class cdExp(object):
                 MRE_melt = melt_blanked / Divide_by
                 val['MRE'] = MRE_melt
 
-    def process_experiment(self, files, mode):
-        self.input_datasets(files)
-        self.set_mode(mode=mode)
-        self.process_filenames(mode=mode)
-        self.set_peptide_bonds()
-        self.read_jasco_datafiles(mode=mode)
-        self.calculate_MRE()
-        self.set_plot_order()
+    # def fit_to_GLF(self, x, y, pars={}):
+    #     from lmfit import Parameters, minimize, report_fit, Model
+    #     def GLF(x,K, A, Q, B, M, v):
+    #         return A + ((K-A) / (1 + Q * np.exp(-B*(x-M)))**(1/v))
+    #     glf_model = Model(GLF)
+    #     print(f'parameter names: {glf_model.param_names}')
+    #     print(f'independent variables: {glf_model.independent_vars}')
+    #     if pars:
+    #         params = glf_model.make_params(A=pars['A'], K=pars['K'], B=pars['B'], Q=pars['Q'], v=pars['v'], M=pars['M'])
+    #     else:
+    #         params = glf_model.make_params(A=np.min(y), K=np.max(y), B=3, Q=1, ν=1, M=0)
+    #
+    #     print(params)
+    #     result = glf_model.fit(y, params, x=x)
+    #     print(result.fit_report())
+    #     return result.best_fit
+
+    def fit_to_GLF(self, x, y, pars={}):
+        from lmfit import Parameters, minimize, report_fit, Model
+        def GLF(x, y,K, A, Q, B, M, v):
+            return A + ((K-A) / (1 + Q * np.exp(-B*(x-M)))**(1/v))
+        glf_model = Model(GLF)
+        print(f'parameter names: {glf_model.param_names}')
+        print(f'independent variables: {glf_model.independent_vars}')
+        if pars:
+            params = glf_model.make_params(A=pars['A'], K=pars['K'], B=pars['B'], Q=pars['Q'], v=pars['v'], M=pars['M'])
+        else:
+            params = glf_model.make_params(A=np.min(y), K=np.max(y), B=3, Q=1, ν=1, M=0)
+
+        print(params)
+        result = glf_model.fit(y, params, x=x)
+        print(result.fit_report())
+        # return result.best_fit
+        return result
+
+    def fit_all_to_sigmoid(self):
+        for val in self.get_samples().values():
+            x, y = val['t'].tolist(), val['MRE'].tolist()
+            fit = self.fit_to_sigmoid(x, y)
+            val['fit'] = fit
+            val['fit_best'] = fit.best_fit
+            val['params'] = fit.params
+            #print(fit)
+            # val['abs_folded'] = fit
+
+    def fit_to_sigmoid(self, x, y, pars={}):
+        from lmfit import Parameters, minimize, report_fit, Model
+        T = 273.15
+        R = 0.0083144598
+        def sigmoid(x, alphaN, betaN, alphaD, betaD, Tm, DHm):
+            return (alphaN + betaN * (T + x) + (alphaD + betaD * (T + x)) *
+                 np.exp(-DHm * (1 - ((T + x) / (T + Tm))) / (R * (T + x)))) /\
+                (1 + np.exp(-DHm * (1 - ((T + x) / (T + Tm))) / (R * (T + x))))
+
+        sigmoid_model = Model(sigmoid)
+        print(f'parameter names: {sigmoid_model.param_names}')
+        print(f'independent variables: {sigmoid_model.independent_vars}')
+        # params = sigmoid_model.make_params()
+        if pars:
+            params = sigmoid_model.make_params(alphaN=pars['alphaN'], betaN=pars['betaN'],
+                                               alphaD=pars['alphaD'], betaD=pars['betaD'], Tm=pars['Tm'], DHm=pars['DHm'])
+        else:
+            params = sigmoid_model.make_params(alphaN=np.max(y), betaN=0, alphaD=np.min(y), betaD=0, Tm=30, DHm=150)
+        print(params)
+        result = sigmoid_model.fit(y, params, x=x)
+        print(result.fit_report())
+        # return result.best_fit
+        return result
+
+    def folded_fraction(self):
+        for val in self.get_samples().values():
+            val['max_folded'] = val['max_folded']
+            val['fr_folded'] =  val['unfolded']
+
+
+
 
     # TODO: add graying out parts of the graph where HT exceeds 700
 
     def spec_plotter(self, fig_title='', legend_pos='best', xlim=(190, 260, 10), every_nth = 1,
                          ylim=((-50, 90, 20), (150, 1050, 200)), palette="Set2", title_size=16, leg_size=16, axlab_size=16, ticklab_size=14, lw=1,
-                     legend_bool=True, figsize=(9,9), dpi=300, spines=2):
+                     legend_bool=True, figsize=(9,9), dpi=300, spines=2, zero_line_bool=1):
         if fig_title:
             self.set_title(fig_title)
         self.get_labels()  # makes sure Labels are in place
@@ -354,6 +460,7 @@ class cdExp(object):
         sns.set_theme()
         sns.set_style("ticks")
         # my_palette = sns.color_palette(cc.glasbey, n_colors=24)
+        #my_palette = sns.color_palette(palette)
         my_palette = sns.color_palette(palette)
 
         # ax1 = plt.subplot2grid((4, 4), (0, 0), colspan=3, rowspan=3)
@@ -367,20 +474,28 @@ class cdExp(object):
         coef = 1e-3  #
         
         for count, sample_n in enumerate(self.get_plot_order()):
+            # print(sample_n)
+            # print(self.get_samples()[sample_n]['Conc_uM'])
+            # if count % 2 == 0:
+            #     color = next(palette)
             if count % every_nth == 0:
+                color = next(palette)
                 data = self.get_samples()[sample_n]
 
-                color=next(palette)
+
                 # if self.get_mode() == 'var_temp_scans' or self.get_mode() == 'kinet_scans':
 
                 sns.lineplot(x=data['WL'], y=data['MRE'] * coef, linewidth=lw,
                              legend=legend_bool, ax=axs[0], label=data['Label'], color=color)
                 sns.lineplot(x=data['WL'], y=data['HT'], linewidth=lw, label=data['Label'],
                              legend=False, ax=axs[1], color=color)
-        zero_line_x = np.linspace(min(data['WL']), max(data['WL']), len(data['WL']))
-        sns.lineplot(x=zero_line_x, y=[0] * len(zero_line_x), color='k', legend=False, ax=axs[0], linewidth=lw)
-        axs[0].lines[-1].set_linestyle("--")
-        axs[0].set_ylabel('$\mathrm{MRE*10^{3}}$\n  $\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1}}$)', size=axlab_size)
+
+        if zero_line_bool == 1:
+            zero_line_x = np.linspace((min(data['WL'])), (max(data['WL'])), len(data['WL']))
+            sns.lineplot(x=zero_line_x, y=[0] * len(zero_line_x), color='k', legend=False, ax=axs[0], linewidth=lw)
+            axs[0].lines[-1].set_linestyle("--")
+
+        axs[0].set_ylabel('$\mathrm{MRE}$$_{222}$\n$\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1} × 10^{3}}$)', size=axlab_size)
         # axs[0].legend(loc=legend_pos, prop={'size': leg_size})
         if fig_title:
             axs[0].set_title(self.get_title(), size=title_size)
@@ -401,6 +516,8 @@ class cdExp(object):
             for ax in [axs[0], axs[1]]:
                 ax.spines[axis].set_linewidth(spines)
 
+
+
         box = axs[0].get_position()
         axs[0].set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
         box = axs[1].get_position()
@@ -410,9 +527,9 @@ class cdExp(object):
         #         bbox_transform=fig.transFigure, ncol=1)
         plt.show()
 
-    def t_plotter(self, labels=[], fig_title='', legend_pos='best', xlim=(5, 95, 10),
+    def t_plotter(self, labels=[],  every_nth = 1, fig_title='', legend_pos='best', xlim=(5, 95, 10),
                      ylim=((-50, 90, 20), (150, 1050, 200)), palette="Set2", title_size=16, leg_size=16, axlab_size=16,
-                     ticklab_size=14, marker_size=20):
+                     ticklab_size=14, lw=1, HT_bool = 1, zero_line_bool=1):
         if fig_title:
             self.set_title(fig_title)
         if labels:
@@ -421,44 +538,105 @@ class cdExp(object):
         sns.set_theme()
         sns.set_style("ticks")
         # my_palette = sns.color_palette(cc.glasbey, n_colors=24)
+        print(len(self.get_plot_order()))
+
         my_palette = sns.color_palette(palette)
 
-        fig, axs = plt.subplots(2, 1,
-                                figsize=(9, 9),
-                                sharex=True,
-                                gridspec_kw=dict(height_ratios=[2, 0.5]))
 
-        palette = itertools.cycle(sns.color_palette(my_palette))
-        coef = 1e-3  #
-        for sample_n in self.get_plot_order():
-            data = self.get_samples()[sample_n]
-            color = next(palette)
-            sns.scatterplot(x=data['t'], y=data['MRE'] * coef, color=color, s=marker_size,
-                         legend=True, ax=axs[0], label=data['Label'])
-            sns.lineplot(x=data['t'], y=data['HT'], color=color, linewidth=3, label=data['Label'],
-                         legend=False, ax=axs[1])
-        axs[0].set_ylabel('$\mathrm{MRE*10^{3}}$\n  $\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1}}$)', size=axlab_size)
-        axs[0].legend(loc=legend_pos, prop={'size': leg_size})
-        axs[0].set_title(self.get_title(), size=title_size)
-        axs[1].set_ylabel('HT (V)', size=axlab_size)
-        axs[1].set_xlabel('Temperature\n', size=axlab_size)
+        if HT_bool == 1:
+            fig, axs = plt.subplots(2, 1,
+                                    figsize=(9, 9),
+                                    sharex=True,
+                                    gridspec_kw=dict(height_ratios=[2, 0.5]))
 
-        for i, ax in enumerate(axs):
-            ax.set_ylim(ylim[i][:2])
+            palette = itertools.cycle(sns.color_palette(my_palette))
+            coef = 1e-3  #
+            for count, sample_n in enumerate(self.get_plot_order()):
+                print(f'plotting sample {sample_n}')
+                if count % every_nth == 0:
+                    color = next(palette)
+                # color = next(palette)
+                data = self.get_samples()[sample_n]
+                # if data['melt'] == 'cool':
+                #     color = next(palette)
+                ax = sns.lineplot(x=data['t'], y=data['MRE'] * coef, color=color,
+                                    legend=True, ax=axs[0], label=data['Label'], lw=lw)
+                if data['melt'] == 'cool':
+                    ax.lines[-1].set_linestyle("--")
+                sns.lineplot(x=data['t'], y=data['HT'], color=color, linewidth=3, label=data['Label'],
+                             legend=False, ax=axs[1])
+
+
+
+            #axs[0].set_ylabel('$\mathrm{MRE}$$_{222}$${*10^{3}}$\n  $\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1}}$)', size=axlab_size)
+            axs[0].set_ylabel('$\mathrm{MRE}$$_{222}$\n$\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1} × 10^{3}}$)', size=axlab_size)
+
+
+            axs[0].legend(loc=legend_pos, prop={'size': leg_size})
+            axs[0].set_title(self.get_title(), size=title_size)
+            axs[1].set_ylabel('HT (V)', size=axlab_size)
+            axs[1].set_xlabel('Temperature (\u00B0C)\n', size=axlab_size)
+
+            for i, ax in enumerate(axs):
+                ax.set_ylim(ylim[i][:2])
+                ax.set_xlim(xlim[:2])
+                major_yticks = np.arange(ylim[i][0], ylim[i][1] + 0.001, ylim[i][2])
+                major_xticks = np.arange(xlim[0], xlim[1] + 0.001, xlim[2])
+                ax.set_xticks(major_xticks)
+                ax.set_yticks(major_yticks)
+                ax.tick_params(axis='x', labelsize=ticklab_size)
+                ax.tick_params(axis='y', labelsize=ticklab_size)
+
+            box = axs[0].get_position()
+            axs[0].set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
+            box = axs[1].get_position()
+            axs[1].set_position([box.x0, box.y0 + box.height * 0.5, box.width, box.height * 0.9])
+            # plt.show()
+        else:
+            fig, axs = plt.subplots(1, 1,
+                                    figsize=(9, 9),
+                                    )
+
+            palette = itertools.cycle(sns.color_palette(my_palette))
+            coef = 1e-3  #
+            for count, sample_n in enumerate(self.get_plot_order()):
+                if count % every_nth == 0:
+                    color = next(palette)
+                data = self.get_samples()[sample_n]
+                # if data['melt'] == 'cool':
+                #     color = next(palette)
+                ax = sns.lineplot(x=data['t'], y=data['MRE'] * coef, color=color,
+                                  legend=True, ax=axs, label=data['Label'], lw=lw)
+                if data['melt'] == 'cool':
+                    ax.lines[-1].set_linestyle("--")
+            zero_line_x = np.linspace(min(data['t']), max(data['t']), len(data['t']))
+            sns.lineplot(x=zero_line_x, y=[0] * len(zero_line_x), color='k', legend=False, ax=axs, linewidth=lw)
+            axs.lines[-1].set_linestyle("--")
+
+            axs.set_ylabel('$\mathrm{MRE}$$_{222}$\n$\mathrm{(deg\ cm^{2}\ dmol^{-1}\ res^{-1} × 10^{3}}$)', size=axlab_size)
+            axs.legend(loc=legend_pos, prop={'size': leg_size})
+            axs.set_title(self.get_title(), size=title_size)
+
+
+
+            ax.set_ylim(ylim[:2])
             ax.set_xlim(xlim[:2])
-            major_yticks = np.arange(ylim[i][0], ylim[i][1] + 0.001, ylim[i][2])
+            major_yticks = np.arange(ylim[0], ylim[1] + 0.001, ylim[2])
             major_xticks = np.arange(xlim[0], xlim[1] + 0.001, xlim[2])
             ax.set_xticks(major_xticks)
             ax.set_yticks(major_yticks)
             ax.tick_params(axis='x', labelsize=ticklab_size)
             ax.tick_params(axis='y', labelsize=ticklab_size)
 
-        box = axs[0].get_position()
-        axs[0].set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
-        box = axs[1].get_position()
-        axs[1].set_position([box.x0, box.y0 + box.height * 0.5, box.width, box.height * 0.9])
-        plt.show()
+            box = axs.get_position()
+            axs.set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
 
+
+        if zero_line_bool == 1:
+            zero_line_x = np.linspace(min(data['t']), max(data['t']), len(data['t']))
+            sns.lineplot(x=zero_line_x, y=[0] * len(zero_line_x), color='k', legend=False, ax=axs[0], linewidth=lw)
+            axs[0].lines[-1].set_linestyle("--")
+        plt.show()
     # def flexi_plotter(self, X, Y, fig_title='', legend_pos='best', xlim=(190, 260, 10), every_nth=1,
     #                  ylim=((-50, 90, 20), (150, 1050, 200)), palette="Set2", title_size=16, leg_size=16, axlab_size=16,
     #                  ticklab_size=14):
@@ -477,11 +655,11 @@ class cdExp(object):
         for count, val in self.get_samples().items():
             self.export([val['WL'], val['MRE'], val['HT']], filename=f"{val['Name']}_MRE-{count}.txt")
 
-    def process_experiment(self, files, mode):
-        self.input_datasets(files)
+    def process_experiment(self, files, mode, blanks, peptide_bonds):
+        self.input_datasets(files, blanks=blanks)
         self.set_mode(mode=mode)
         self.process_filenames(mode=mode)
-        self.set_peptide_bonds()
+        self.set_peptide_bonds(peptide_bonds=peptide_bonds)
         self.read_jasco_datafiles(mode=mode)
         self.calculate_MRE()
         self.set_plot_order()
